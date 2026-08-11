@@ -17,3 +17,5 @@ source-archives/
 # Local Kubernetes credentials
 *.kubeconfig
 
+# Workspace-local Helm cache used by managed environments
+.helm/

@@ -34,14 +34,30 @@ config:
             weight: 1
   routing:
     decisions:
+      # Keep long prompts off the 4,096-token CPU model. The v0.3 context
+      # signal uses a fast character-based estimate, so the 2,000-token split
+      # preserves headroom for generated tokens and tokenizer variance.
+      - name: long_context_decision
+        description: Route prompts above the CPU input budget to the GPU tier
+        priority: 30
+        rules:
+          operator: OR
+          conditions:
+            - type: context
+              name: exceeds_cpu_input_budget
+        modelRefs:
+          - model: gpt-oss-20b
+            use_reasoning: false
       - name: business_decision
         description: Business and management related queries
         priority: 10
         rules:
-          operator: OR
+          operator: AND
           conditions:
             - type: domain
               name: business
+            - type: context
+              name: within_cpu_input_budget
         modelRefs:
           - model: qwen-small
             use_reasoning: false
@@ -55,10 +71,12 @@ config:
         description: Legal questions and law-related topics
         priority: 10
         rules:
-          operator: OR
+          operator: AND
           conditions:
             - type: domain
               name: law
+            - type: context
+              name: within_cpu_input_budget
         modelRefs:
           - model: qwen-small
             use_reasoning: false
@@ -72,10 +90,12 @@ config:
         description: Psychology and mental health topics
         priority: 10
         rules:
-          operator: OR
+          operator: AND
           conditions:
             - type: domain
               name: psychology
+            - type: context
+              name: within_cpu_input_budget
         modelRefs:
           - model: qwen-small
             use_reasoning: false
@@ -122,10 +142,12 @@ config:
         description: Historical questions and cultural topics
         priority: 10
         rules:
-          operator: OR
+          operator: AND
           conditions:
             - type: domain
               name: history
+            - type: context
+              name: within_cpu_input_budget
         modelRefs:
           - model: qwen-small
             use_reasoning: false
@@ -139,10 +161,12 @@ config:
         description: Health and medical information queries
         priority: 10
         rules:
-          operator: OR
+          operator: AND
           conditions:
             - type: domain
               name: health
+            - type: context
+              name: within_cpu_input_budget
         modelRefs:
           - model: qwen-small
             use_reasoning: false
@@ -155,10 +179,12 @@ config:
         description: Economics and financial topics
         priority: 10
         rules:
-          operator: OR
+          operator: AND
           conditions:
             - type: domain
               name: economics
+            - type: context
+              name: within_cpu_input_budget
         modelRefs:
           - model: qwen-small
             use_reasoning: false
@@ -223,10 +249,12 @@ config:
         description: Philosophy and ethical questions
         priority: 10
         rules:
-          operator: OR
+          operator: AND
           conditions:
             - type: domain
               name: philosophy
+            - type: context
+              name: within_cpu_input_budget
         modelRefs:
           - model: qwen-small
             use_reasoning: false
@@ -277,10 +305,12 @@ config:
         description: General knowledge and miscellaneous topics
         priority: 1
         rules:
-          operator: OR
+          operator: AND
           conditions:
             - type: domain
               name: other
+            - type: context
+              name: within_cpu_input_budget
         modelRefs:
           - model: qwen-small
             use_reasoning: false
@@ -290,6 +320,15 @@ config:
               enabled: true
               similarity_threshold: 0.75
     signals:
+      context:
+        - name: within_cpu_input_budget
+          min_tokens: "0"
+          max_tokens: "2000"
+          description: Estimated input is small enough for the 4,096-token CPU model with generation headroom
+        - name: exceeds_cpu_input_budget
+          min_tokens: "2001"
+          max_tokens: "1M"
+          description: Estimated input exceeds the CPU routing budget and must use the GPU tier
       keywords:
         - name: thinking
           operator: OR

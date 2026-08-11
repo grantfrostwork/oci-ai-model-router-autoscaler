@@ -65,6 +65,46 @@ The Kubernetes manifests must be checked against the CRDs installed in the clust
 
 ## Inference autoscaling
 
+### Token-aware model routing
+
+Requests using the automatic semantic route reach the CPU `qwen-small` model
+only when both conditions are true:
+
+- The existing domain rule designates the request as CPU-eligible.
+- The Semantic Router estimates no more than 2,000 input tokens across the
+  request messages.
+
+Prompts estimated at 2,001 tokens or more are sent to the GPU
+`gpt-oss-20b` model by a higher-priority decision. Domains already assigned to
+the GPU and prompts matching the `thinking` keyword signal continue to use the
+GPU even when they are shorter than 2,000 tokens. Unclassifiable requests also
+default to the GPU.
+
+Semantic Router v0.3 estimates context tokens using approximately four UTF-8
+bytes per token. The 2,000-token cutoff deliberately leaves headroom inside
+the CPU model's 4,096-token sequence limit for output generation and estimation
+variance. It is a routing threshold, not an exact tokenizer-enforced quota.
+
+Deploy the routing policy and keep the singleton Semantic Router compatible
+with its RWO model volume:
+
+```bash
+helm upgrade --install semantic-router \
+  oci://ghcr.io/vllm-project/charts/semantic-router \
+  --version v0.0.0-latest \
+  --namespace vllm-semantic-router-system \
+  --create-namespace \
+  --values Kubernetes/sr-values.yaml
+
+kubectl patch deployment semantic-router \
+  --namespace vllm-semantic-router-system \
+  --type merge \
+  --patch-file Kubernetes/semantic-router-recreate-patch.yaml
+```
+
+The `Recreate` strategy prevents a rolling upgrade from trying to attach the
+same RWO model volume to old and new router pods simultaneously.
+
 The model tiers use StatefulSets so every replica receives its own dynamically
 provisioned OCI Block Volume. PVCs are retained on scale-down so a returning
 ordinal can reuse its downloaded model weights. The original singleton
