@@ -47,7 +47,7 @@ After the workstation CIDR is allowed by `api-nsg`, generate a separate kubeconf
 oci ce cluster create-kubeconfig \
   --profile DEFAULT \
   --region us-ashburn-1 \
-  --cluster-id <INFERENCE_POC_CLUSTER_OCID> \
+  --cluster-id ocid1.cluster.oc1.iad.aaaaaaaa2dfqxema5mgzbityvjgw4vmgldh4w4fxyrots7xfmc4oufqzxwpa \
   --file /tmp/inference-poc-kubeconfig \
   --token-version 2.0.0 \
   --kube-endpoint PUBLIC_ENDPOINT
