@@ -39,14 +39,85 @@ spec:
               periodSeconds: 300
   triggers:
     - type: prometheus
+      name: queue-depth
+      metricType: AverageValue
+      useCachedMetrics: true
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+        metricName: vllm_cpu_queue_depth
+        query: >-
+          sum(vllm:num_requests_waiting{namespace="inference",service="vllm-cpu"})
+        threshold: "2"
+        activationThreshold: "0"
+        ignoreNullValues: "false"
+    - type: prometheus
+      name: kv-cache-pressure
       metricType: Value
       useCachedMetrics: true
       metadata:
         serverAddress: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
-        metricName: vllm_cpu_inflight_requests
-        query: sum(vllm:num_requests_running{namespace="inference",service="vllm-cpu"}) + sum(vllm:num_requests_waiting{namespace="inference",service="vllm-cpu"})
-        threshold: "4"
+        metricName: vllm_cpu_kv_cache_pressure
+        query: >-
+          max(vllm:kv_cache_usage_perc{namespace="inference",service="vllm-cpu"})
+        threshold: "0.75"
         activationThreshold: "0"
+        ignoreNullValues: "false"
+    - type: prometheus
+      name: queue-time-p95
+      metricType: Value
+      useCachedMetrics: true
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+        metricName: vllm_cpu_queue_time_p95_seconds
+        query: >-
+          (
+            clamp_max(
+              histogram_quantile(
+                0.95,
+                sum by (le) (
+                  rate(vllm:request_queue_time_seconds_bucket{namespace="inference",service="vllm-cpu"}[2m])
+                )
+              ),
+              60
+            )
+            and on ()
+            sum(rate(vllm:request_queue_time_seconds_count{namespace="inference",service="vllm-cpu"}[2m])) > 0
+          )
+          or on ()
+          (
+            0 * count(vllm:request_queue_time_seconds_count{namespace="inference",service="vllm-cpu"})
+          )
+        threshold: "2"
+        activationThreshold: "0"
+        ignoreNullValues: "false"
+    - type: prometheus
+      name: ttft-p95
+      metricType: Value
+      useCachedMetrics: true
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+        metricName: vllm_cpu_ttft_p95_seconds
+        query: >-
+          (
+            clamp_max(
+              histogram_quantile(
+                0.95,
+                sum by (le) (
+                  rate(vllm:time_to_first_token_seconds_bucket{namespace="inference",service="vllm-cpu"}[2m])
+                )
+              ),
+              60
+            )
+            and on ()
+            sum(rate(vllm:time_to_first_token_seconds_count{namespace="inference",service="vllm-cpu"}[2m])) > 0
+          )
+          or on ()
+          (
+            0 * count(vllm:time_to_first_token_seconds_count{namespace="inference",service="vllm-cpu"})
+          )
+        threshold: "5"
+        activationThreshold: "0"
+        ignoreNullValues: "false"
 ---
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
@@ -89,11 +160,82 @@ spec:
               periodSeconds: 600
   triggers:
     - type: prometheus
+      name: queue-depth
+      metricType: AverageValue
+      useCachedMetrics: true
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+        metricName: vllm_gpu_queue_depth
+        query: >-
+          sum(vllm:num_requests_waiting{namespace="inference",service="vllm-gpu"})
+        threshold: "1"
+        activationThreshold: "0"
+        ignoreNullValues: "false"
+    - type: prometheus
+      name: kv-cache-pressure
       metricType: Value
       useCachedMetrics: true
       metadata:
         serverAddress: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
-        metricName: vllm_gpu_inflight_requests
-        query: sum(vllm:num_requests_running{namespace="inference",service="vllm-gpu"}) + sum(vllm:num_requests_waiting{namespace="inference",service="vllm-gpu"})
+        metricName: vllm_gpu_kv_cache_pressure
+        query: >-
+          max(vllm:kv_cache_usage_perc{namespace="inference",service="vllm-gpu"})
+        threshold: "0.75"
+        activationThreshold: "0"
+        ignoreNullValues: "false"
+    - type: prometheus
+      name: queue-time-p95
+      metricType: Value
+      useCachedMetrics: true
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+        metricName: vllm_gpu_queue_time_p95_seconds
+        query: >-
+          (
+            clamp_max(
+              histogram_quantile(
+                0.95,
+                sum by (le) (
+                  rate(vllm:request_queue_time_seconds_bucket{namespace="inference",service="vllm-gpu"}[2m])
+                )
+              ),
+              60
+            )
+            and on ()
+            sum(rate(vllm:request_queue_time_seconds_count{namespace="inference",service="vllm-gpu"}[2m])) > 0
+          )
+          or on ()
+          (
+            0 * count(vllm:request_queue_time_seconds_count{namespace="inference",service="vllm-gpu"})
+          )
+        threshold: "1"
+        activationThreshold: "0"
+        ignoreNullValues: "false"
+    - type: prometheus
+      name: ttft-p95
+      metricType: Value
+      useCachedMetrics: true
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+        metricName: vllm_gpu_ttft_p95_seconds
+        query: >-
+          (
+            clamp_max(
+              histogram_quantile(
+                0.95,
+                sum by (le) (
+                  rate(vllm:time_to_first_token_seconds_bucket{namespace="inference",service="vllm-gpu"}[2m])
+                )
+              ),
+              60
+            )
+            and on ()
+            sum(rate(vllm:time_to_first_token_seconds_count{namespace="inference",service="vllm-gpu"}[2m])) > 0
+          )
+          or on ()
+          (
+            0 * count(vllm:time_to_first_token_seconds_count{namespace="inference",service="vllm-gpu"})
+          )
         threshold: "2"
         activationThreshold: "0"
+        ignoreNullValues: "false"

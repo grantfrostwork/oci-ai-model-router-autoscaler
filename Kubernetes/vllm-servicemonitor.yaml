@@ -15,4 +15,7 @@ spec:
   endpoints:
     - port: http
       path: /metrics
-      interval: 15s
+      # Match KEDA's five-second polling interval so burst-driven queue growth is
+      # visible to the scaler without waiting for a stale 15-second sample.
+      interval: 5s
+      scrapeTimeout: 3s

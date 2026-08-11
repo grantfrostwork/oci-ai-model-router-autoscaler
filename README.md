@@ -47,13 +47,19 @@ After the workstation CIDR is allowed by `api-nsg`, generate a separate kubeconf
 oci ce cluster create-kubeconfig \
   --profile DEFAULT \
   --region us-ashburn-1 \
-  --cluster-id ocid1.cluster.oc1.iad.aaaaaaaa2dfqxema5mgzbityvjgw4vmgldh4w4fxyrots7xfmc4oufqzxwpa \
+  --cluster-id <INFERENCE_POC_CLUSTER_OCID> \
   --file /tmp/inference-poc-kubeconfig \
   --token-version 2.0.0 \
   --kube-endpoint PUBLIC_ENDPOINT
 
 kubectl --kubeconfig /tmp/inference-poc-kubeconfig get nodes
 ```
+
+Resolve and verify the current cluster OCID before generating the kubeconfig.
+Do not reuse a historical OCID or deploy these manifests to another OKE cluster
+merely because it is active; confirm that the target is the intended
+`inference-poc` environment and inspect its existing namespaces and workloads
+first.
 
 The Kubernetes manifests must be checked against the CRDs installed in the cluster before changes are applied. In particular, use `kubectl explain` and server-side dry runs for `OCINodeClass`, `NodePool`, and Envoy AI Gateway resources.
 
@@ -66,13 +72,27 @@ ordinal can reuse its downloaded model weights. The original singleton
 deleted only after the StatefulSet replicas are healthy and their new claims
 are verified.
 
-KEDA 2.20.2 reads the existing vLLM Prometheus metrics and scales on total
-in-flight work (`running + waiting`):
+KEDA 2.20.2 reads the native vLLM Prometheus metrics and evaluates four
+independent signals. Kubernetes HPA uses the signal that requests the greatest
+number of replicas:
 
-- CPU: 1-7 serving replicas, target 4 in-flight requests per replica.
-- GPU: 1-3 serving replicas, target 2 in-flight requests per replica.
-- Scale-down is deliberately slow because model and node cold starts take
-  minutes.
+| Signal | CPU target | GPU target | Metric type | Purpose |
+| --- | ---: | ---: | --- | --- |
+| Queue depth | 2 waiting requests/replica | 1 waiting request/replica | `AverageValue` | Primary demand signal |
+| KV-cache utilization | 75% | 75% | `Value` | Early saturation signal from the hottest replica |
+| p95 queue wait | 2 seconds | 1 second | `Value` | Queueing SLO guardrail |
+| p95 time to first token | 5 seconds | 2 seconds | `Value` | User-visible latency guardrail |
+
+The queue-depth trigger intentionally uses `AverageValue`. If the CPU tier has
+10 waiting requests and a target of 2, HPA requests `ceil(10 / 2) = 5`
+replicas; the result does not get multiplied by the current replica count. The
+latency queries use a two-minute window and return zero when the window has no
+completed requests, avoiding invalid `NaN` values during idle periods.
+
+These thresholds are safe initial values, not benchmark-derived SLOs. Calibrate
+them with representative prompt lengths, output lengths, and concurrency after
+deployment. Scale-down remains deliberately slow because model and node cold
+starts take minutes: 15 minutes for CPU and 30 minutes for GPU.
 
 Each tier also has one low-priority pause pod. It requests the same schedulable
 resources as a serving replica, causing Karpenter to maintain one N+1 node.
@@ -104,9 +124,15 @@ kubectl apply -f Kubernetes/overprovisioning.yaml
 kubectl apply -f Kubernetes/cpu-tier.yaml
 kubectl apply -f Kubernetes/gpu-tier.yaml
 kubectl apply -f Kubernetes/vllm-servicemonitor.yaml
+kubectl apply -f Kubernetes/vllm-grafana-dashboard.yaml
 kubectl apply -f Kubernetes/keda-vllm-scalers.yaml
 kubectl apply -f Kubernetes/gwapi-resources.yaml
 ```
+
+The Grafana sidecar in a standard `kube-prometheus-stack` installation imports
+the `vLLM Inference Autoscaling` dashboard from the labelled ConfigMap in the
+`monitoring` namespace. It displays queue depth, per-pod KV-cache pressure, p95
+TTFT, p95 queue wait, active work, and current versus desired HPA replicas.
 
 When migrating from the original Deployments, allow each new StatefulSet pod
 to become Ready before deleting the same-named Deployment. Both controllers
@@ -126,23 +152,37 @@ For a bounded, request-driven smoke test, send enough concurrent work to cross
 one KEDA target. Explicit model names make the tier selection deterministic:
 
 ```bash
-# CPU target is 4; ten requests should produce a desired replica count of 3.
+# Generate enough long-running work to create a sustained CPU queue.
 seq 1 10 | xargs -P 10 -I{} curl -sS --max-time 120 -o /dev/null \
   -H 'Content-Type: application/json' \
   -d '{"model":"qwen-small","messages":[{"role":"user","content":"Write a detailed production Kubernetes platform guide. Continue until the response limit."}],"max_tokens":512}' \
   http://GATEWAY_ADDRESS/v1/chat/completions
 
-# GPU target is 2; four requests should produce a desired replica count of 2.
+# Generate enough long-running work to create a sustained GPU queue.
 seq 1 4 | xargs -P 4 -I{} curl -sS --max-time 120 -o /dev/null \
   -H 'Content-Type: application/json' \
   -d '{"model":"gpt-oss-20b","messages":[{"role":"user","content":"Analyze production inference scaling tradeoffs. Continue until the response limit."}],"max_tokens":512}' \
   http://GATEWAY_ADDRESS/v1/chat/completions
 ```
 
-Watch `running + waiting`, the KEDA HPA, PVC creation, placeholder preemption,
-and NodeClaims during the test. To end a test without waiting for the production
-scale-down stabilization windows, temporarily pin the tier to one replica and
-then immediately restore KEDA control after the metric reaches zero:
+Watch the native inference metrics, KEDA HPA, PVC creation, placeholder
+preemption, and NodeClaims during the test:
+
+```promql
+sum by (service) (vllm:num_requests_waiting{namespace="inference"})
+max by (service, pod) (vllm:kv_cache_usage_perc{namespace="inference"})
+histogram_quantile(0.95, sum by (service, le) (rate(vllm:request_queue_time_seconds_bucket{namespace="inference"}[2m])))
+histogram_quantile(0.95, sum by (service, le) (rate(vllm:time_to_first_token_seconds_bucket{namespace="inference"}[2m])))
+```
+
+Queue depth is the primary scaling signal. A nonzero queue does not necessarily
+cause an immediate additional replica: the CPU target is two queued requests
+per replica and the GPU target is one. KV pressure or an SLO guardrail can ask
+for more replicas even before a queue becomes deep.
+
+To end a test without waiting for the production scale-down stabilization
+windows, temporarily pin the tier to one replica and then immediately restore
+KEDA control after the metric reaches zero:
 
 ```bash
 kubectl annotate scaledobject vllm-cpu vllm-gpu -n inference \
