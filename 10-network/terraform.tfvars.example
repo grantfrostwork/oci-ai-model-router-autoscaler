@@ -1,0 +1,4 @@
+compartment_ocid = "ocid1.compartment.oc1..aaaaaaaahalatvd7ffsoopo4rp5iqcefaqz7whc5umn5wrrnxe24rlbfm55a"
+k8s_version      = "v1.34.1"
+my_ip_cidr       = "203.0.113.10/32"
+

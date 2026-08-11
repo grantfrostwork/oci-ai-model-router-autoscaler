@@ -1,0 +1,18 @@
+# vllm-servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: vllm
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames: [inference]
+  selector:
+    matchExpressions:
+      - {key: tier, operator: In, values: [cpu, gpu]}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s

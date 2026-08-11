@@ -1,0 +1,106 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vllm-cpu
+  namespace: inference
+  labels:
+    tier: cpu
+spec:
+  serviceName: vllm-cpu-headless
+  replicas: 1
+  podManagementPolicy: Parallel
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vllm-cpu
+  template:
+    metadata:
+      labels:
+        app: vllm-cpu
+        app.kubernetes.io/name: vllm-cpu
+        tier: cpu
+      annotations:
+        karpenter.sh/do-not-disrupt: "true"
+    spec:
+      priorityClassName: inference-serving
+      nodeSelector:
+        inference-tier: cpu
+      tolerations:
+        - key: inference-tier
+          value: cpu
+          effect: NoSchedule
+      containers:
+        - name: vllm
+          image: docker.io/vllm/vllm-openai-cpu:v0.26.0-x86_64
+          args:
+            - --model=Qwen/Qwen3-1.7B
+            - --served-model-name=qwen-small
+            - --dtype=bfloat16
+            - --max-model-len=4096
+            - --port=8000
+          env:
+            - name: VLLM_CPU_KVCACHE_SPACE
+              value: "8"
+            - name: VLLM_CPU_OMP_THREADS_BIND
+              value: "0-13"
+            - name: HF_HOME
+              value: /cache
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef: {name: hf-token, key: token, optional: true}
+          ports:
+            - {containerPort: 8000, name: http}
+          resources:
+            requests: {cpu: "14", memory: "24Gi"}
+            limits:   {cpu: "15", memory: "32Gi"}
+          volumeMounts:
+            - {name: hf-cache, mountPath: /cache}
+            - {name: shm, mountPath: /dev/shm}
+          startupProbe:
+            httpGet: {path: /health, port: 8000}
+            periodSeconds: 10
+            failureThreshold: 90
+          readinessProbe:
+            httpGet: {path: /health, port: 8000}
+            periodSeconds: 10
+      volumes:
+        - name: shm
+          emptyDir: {medium: Memory, sizeLimit: 4Gi}
+  volumeClaimTemplates:
+    - metadata:
+        name: hf-cache
+        labels:
+          app.kubernetes.io/name: vllm-cpu
+          tier: cpu
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: oci-bv
+        resources:
+          requests:
+            storage: 50Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-cpu-headless
+  namespace: inference
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: vllm-cpu
+  ports:
+    - {name: http, port: 8000, targetPort: 8000}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-cpu
+  namespace: inference
+  labels: {tier: cpu}
+spec:
+  selector: {app: vllm-cpu}
+  ports:
+    - {name: http, port: 8000, targetPort: 8000}

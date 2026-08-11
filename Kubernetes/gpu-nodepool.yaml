@@ -1,0 +1,45 @@
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: gpu-inference
+spec:
+  template:
+    metadata:
+      labels:
+        inference-tier: gpu
+    spec:
+      expireAfter: Never
+      nodeClassRef:
+        group: oci.oraclecloud.com
+        kind: OCINodeClass
+        name: gpu-nodeclass
+      taints:
+        - key: nvidia.com/gpu
+          value: "present"
+          effect: NoSchedule
+        - key: inference-tier
+          value: gpu
+          effect: NoSchedule
+      requirements:
+        - key: kubernetes.io/os
+          operator: In
+          values: ["linux"]
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand"]
+        - key: oci.oraclecloud.com/instance-shape
+          operator: In
+          values: ["VM.GPU.A10.1"]
+        - key: topology.kubernetes.io/zone
+          operator: In
+          values: ["US-ASHBURN-AD-1"]
+      terminationGracePeriod: 30m
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 10m
+  limits:
+    # Three serving replicas plus one N+1 warm-capacity node.
+    nvidia.com/gpu: "4"

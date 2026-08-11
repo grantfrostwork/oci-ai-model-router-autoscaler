@@ -1,0 +1,40 @@
+apiVersion: oci.oraclecloud.com/v1beta1
+kind: OCINodeClass
+metadata:
+  name: cpu-nodeclass
+spec:
+  sshAuthorizedKeys:
+    - "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC1ZmGnV+vltRj58ZZcs8dea5LQsrI8Gq79eDm/8cOcIxM9VUuEBjjovNOm/AdserwM6e2vzKBl+5iySWA1w7ovavPXpApJckVQUkHH1D0XGVpfRftdTnk37KwcfhUCg2qxYI5FuJxCpjmXlhoFqEkxBF9eMNnmeCs7x7B1hhG95b83KqXNt5tooKoR2Lzi2SWcxTWD6R4iUvv90dmJoaqkXG+a/toZ48lp9kvQRuAFaoIiJCY4bBCv5XkB3R3qK5wbcnecMid5p0A/3OxRNOAkjj0dK7H+wXpZ/YPYqbU23kNfrFXJWMyh/nAJHcFRVQ9G8cqKZn4HGe0GHS7ckmgt ssh-key-2023-11-16"
+
+  shapeConfigs:
+    - ocpus: 8
+      memoryInGbs: 64
+
+  volumeConfig:
+    bootVolumeConfig:
+      # confirm field placement from the next explain output
+      sizeInGBs: 100
+      vpusPerGB: 20
+      imageConfig:
+        imageType: OKEImage
+        imageId: ocid1.image.oc1.iad.aaaaaaaa5nm77wrrpwfonri36r57ji6budyle52sagtckd2x7xe4nl6lioma
+
+  networkConfig:
+    primaryVnicConfig:
+      subnetConfig:
+        subnetId: ocid1.subnet.oc1.iad.aaaaaaaa3mazjgm7cckbn4rwbmvbc7b4pkgqcyx5i7rr3hymdd5czwqsjbmq
+      networkSecurityGroupConfigs:
+        - networkSecurityGroupId: ocid1.networksecuritygroup.oc1.iad.aaaaaaaalnbfxoafe2ablh5wtip7m53bku2xqi6bkl7byjwltisfwwciluqq
+    secondaryVnicConfigs:
+      - subnetConfig:
+          subnetId: ocid1.subnet.oc1.iad.aaaaaaaaz5tvr3i32ywlatztrdmwazuqvq6u5flpniysmsxepyurlhqlj27q
+        networkSecurityGroupConfigs:
+          - networkSecurityGroupId: ocid1.networksecuritygroup.oc1.iad.aaaaaaaa3t7kvspnlaoupz53rx6gs5cskugn46undy5kncdxelmangs5bpjq
+        ipCount: 16
+
+  kubeletConfig:
+    maxPods: 31
+
+  freeformTags:
+    tier: "cpu"
+    managed-by: "karpenter"

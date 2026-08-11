@@ -1,0 +1,23 @@
+# gputest.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gputest
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    inference-tier: gpu
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+    - key: inference-tier
+      value: gpu
+      effect: NoSchedule
+  containers:
+    - name: cuda
+      image: docker.io/nvidia/cuda:12.4.1-base-ubuntu22.04
+      command: ["nvidia-smi"]
+      resources:
+        limits:
+          nvidia.com/gpu: 1

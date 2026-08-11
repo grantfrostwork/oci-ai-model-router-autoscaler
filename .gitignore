@@ -1,0 +1,19 @@
+.DS_Store
+__MACOSX/
+
+# Terraform runtime and local state
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+
+# Environment-specific inputs and recovered source archives
+*.tfvars
+!*.tfvars.example
+source-archives/
+
+# Local Kubernetes credentials
+*.kubeconfig
+

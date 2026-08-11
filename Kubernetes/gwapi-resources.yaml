@@ -1,0 +1,252 @@
+# Adapted from upstream gwapi-resources.yaml + base-model.yaml
+# Changes from upstream:
+#   - namespace default -> inference (co-located with vllm-cpu / vllm-gpu)
+#   - demo LoRA backend replaced with two real backends
+#   - AIGatewayRoute matches on qwen-small / gpt-oss-20b (your modelCards)
+#   - EnvoyPatchPolicy listener name updated for the new namespace
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: semantic-router
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: semantic-router
+  namespace: inference
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        container:
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+        pod:
+          topologySpreadConstraints:
+            - maxSkew: 1
+              topologyKey: kubernetes.io/hostname
+              whenUnsatisfiable: ScheduleAnyway
+              labelSelector:
+                matchLabels:
+                  gateway.envoyproxy.io/owning-gateway-name: semantic-router
+      envoyHpa:
+        minReplicas: 2
+        maxReplicas: 10
+        metrics:
+          - type: ContainerResource
+            containerResource:
+              name: cpu
+              container: envoy
+              target:
+                type: Utilization
+                averageUtilization: 65
+        behavior:
+          scaleUp:
+            stabilizationWindowSeconds: 0
+            selectPolicy: Max
+            policies:
+              - type: Pods
+                value: 4
+                periodSeconds: 15
+              - type: Percent
+                value: 100
+                periodSeconds: 15
+          scaleDown:
+            stabilizationWindowSeconds: 300
+            selectPolicy: Min
+            policies:
+              - type: Pods
+                value: 1
+                periodSeconds: 60
+      envoyService:
+        type: LoadBalancer
+  logging:
+    level:
+      # upstream ships 'trace' — far too noisy. Bump to debug temporarily
+      # if you need to see routing decisions inside Envoy.
+      default: info
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: semantic-router
+  namespace: inference
+spec:
+  gatewayClassName: semantic-router
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: semantic-router
+---
+# Envoy Gateway defaults to a 32kiB buffer, which is too small for AI payloads.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: semantic-router
+  namespace: inference
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: semantic-router
+  connection:
+    bufferLimit: 50Mi
+---
+# ---------- CPU tier ----------
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: Backend
+metadata:
+  name: vllm-cpu
+  namespace: inference
+spec:
+  endpoints:
+    - fqdn:
+        hostname: vllm-cpu.inference.svc.cluster.local
+        port: 8000
+---
+apiVersion: aigateway.envoyproxy.io/v1alpha1
+kind: AIServiceBackend
+metadata:
+  name: vllm-cpu
+  namespace: inference
+spec:
+  schema:
+    name: OpenAI
+  backendRef:
+    name: vllm-cpu
+    kind: Backend
+    group: gateway.envoyproxy.io
+---
+# ---------- GPU tier ----------
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: Backend
+metadata:
+  name: vllm-gpu
+  namespace: inference
+spec:
+  endpoints:
+    - fqdn:
+        hostname: vllm-gpu.inference.svc.cluster.local
+        port: 8000
+---
+apiVersion: aigateway.envoyproxy.io/v1alpha1
+kind: AIServiceBackend
+metadata:
+  name: vllm-gpu
+  namespace: inference
+spec:
+  schema:
+    name: OpenAI
+  backendRef:
+    name: vllm-gpu
+    kind: Backend
+    group: gateway.envoyproxy.io
+---
+# The semantic router classifies the request and rewrites the model, which
+# surfaces to Envoy as the x-ai-eg-model header. These rules translate that
+# choice into a backend. Values must match modelCards in sr-values.yaml.
+apiVersion: aigateway.envoyproxy.io/v1alpha1
+kind: AIGatewayRoute
+metadata:
+  name: semantic-router
+  namespace: inference
+spec:
+  parentRefs:
+    - name: semantic-router
+      kind: Gateway
+      group: gateway.networking.k8s.io
+  rules:
+    - matches:
+        - headers:
+            - type: Exact
+              name: x-ai-eg-model
+              value: qwen-small
+      backendRefs:
+        - name: vllm-cpu
+      timeouts:
+        request: 120s
+        backendRequest: 120s
+    - matches:
+        - headers:
+            - type: Exact
+              name: x-ai-eg-model
+              value: gpt-oss-20b
+      backendRefs:
+        - name: vllm-gpu
+      timeouts:
+        request: 120s
+        backendRequest: 120s
+---
+# Inserts the semantic router as the FIRST http filter, ahead of the
+# AI Gateway's own extproc, so classification happens before backend selection.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyPatchPolicy
+metadata:
+  name: ai-gateway-prepost-extproc-patch-policy
+  namespace: inference
+spec:
+  jsonPatches:
+    - name: inference/semantic-router/http
+      operation:
+        op: add
+        path: /default_filter_chain/filters/0/typed_config/http_filters/0
+        value:
+          name: semantic-router-extproc
+          typedConfig:
+            '@type': type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
+            allow_mode_override: true
+            grpcService:
+              envoyGrpc:
+                authority: semantic-router.vllm-semantic-router-system:50051
+                clusterName: semantic-router
+              timeout: 60s
+            message_timeout: 60s
+            processing_mode:
+              # Switch request_body_mode to STREAMED once non-streaming works.
+              # See the project's "Streamed ExtProc and immediate responses" page.
+              request_body_mode: BUFFERED
+              request_header_mode: SEND
+              request_trailer_mode: SKIP
+              response_body_mode: BUFFERED
+              response_header_mode: SEND
+              response_trailer_mode: SKIP
+      type: type.googleapis.com/envoy.config.listener.v3.Listener
+    - name: semantic-router
+      operation:
+        op: add
+        path: ''
+        value:
+          connect_timeout: 60s
+          http2_protocol_options: {}
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: semantic-router
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: semantic-router.vllm-semantic-router-system.svc.cluster.local
+                          port_value: 50051
+          name: semantic-router
+          type: STRICT_DNS
+      type: type.googleapis.com/envoy.config.cluster.v3.Cluster
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: semantic-router
+  type: JSONPatch

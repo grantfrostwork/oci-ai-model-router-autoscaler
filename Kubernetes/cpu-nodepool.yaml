@@ -1,0 +1,43 @@
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: cpu-inference
+spec:
+  template:
+    metadata:
+      labels:
+        inference-tier: cpu
+    spec:
+      expireAfter: Never
+      nodeClassRef:
+        group: oci.oraclecloud.com
+        kind: OCINodeClass
+        name: cpu-nodeclass
+      taints:
+        - key: inference-tier
+          value: cpu
+          effect: NoSchedule
+      requirements:
+        - key: kubernetes.io/os
+          operator: In
+          values: ["linux"]
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand"]
+        - key: oci.oraclecloud.com/instance-shape
+          operator: In
+          values: ["VM.Standard3.Flex"]
+        - key: topology.kubernetes.io/zone
+          operator: In
+          values: ["US-ASHBURN-AD-1"]
+      terminationGracePeriod: 30m
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 2m
+  limits:
+    # Eight 16-vCPU VM.Standard3.Flex nodes. The model and the warm-capacity
+    # placeholder each consume almost a full node.
+    cpu: "128"

@@ -1,0 +1,99 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: vllm-cpu
+  namespace: inference
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: vllm-cpu
+  pollingInterval: 5
+  minReplicaCount: 1
+  maxReplicaCount: 7
+  fallback:
+    failureThreshold: 3
+    replicas: 1
+    behavior: currentReplicasIfHigher
+  advanced:
+    restoreToOriginalReplicaCount: true
+    horizontalPodAutoscalerConfig:
+      name: keda-vllm-cpu
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          selectPolicy: Max
+          policies:
+            - type: Pods
+              value: 3
+              periodSeconds: 15
+            - type: Percent
+              value: 100
+              periodSeconds: 15
+        scaleDown:
+          stabilizationWindowSeconds: 900
+          selectPolicy: Min
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 300
+  triggers:
+    - type: prometheus
+      metricType: Value
+      useCachedMetrics: true
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+        metricName: vllm_cpu_inflight_requests
+        query: sum(vllm:num_requests_running{namespace="inference",service="vllm-cpu"}) + sum(vllm:num_requests_waiting{namespace="inference",service="vllm-cpu"})
+        threshold: "4"
+        activationThreshold: "0"
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: vllm-gpu
+  namespace: inference
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: vllm-gpu
+  pollingInterval: 5
+  minReplicaCount: 1
+  maxReplicaCount: 3
+  fallback:
+    failureThreshold: 3
+    replicas: 1
+    behavior: currentReplicasIfHigher
+  advanced:
+    restoreToOriginalReplicaCount: true
+    horizontalPodAutoscalerConfig:
+      name: keda-vllm-gpu
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          selectPolicy: Max
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 30
+            - type: Percent
+              value: 100
+              periodSeconds: 30
+        scaleDown:
+          stabilizationWindowSeconds: 1800
+          selectPolicy: Min
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 600
+  triggers:
+    - type: prometheus
+      metricType: Value
+      useCachedMetrics: true
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+        metricName: vllm_gpu_inflight_requests
+        query: sum(vllm:num_requests_running{namespace="inference",service="vllm-gpu"}) + sum(vllm:num_requests_waiting{namespace="inference",service="vllm-gpu"})
+        threshold: "2"
+        activationThreshold: "0"

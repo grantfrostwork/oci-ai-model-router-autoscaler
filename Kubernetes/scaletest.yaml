@@ -1,0 +1,26 @@
+# scaletest.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scaletest
+spec:
+  replicas: 0
+  selector:
+    matchLabels: {app: scaletest}
+  template:
+    metadata:
+      labels: {app: scaletest}
+    spec:
+      nodeSelector:
+        inference-tier: cpu
+      tolerations:
+        - key: inference-tier
+          value: cpu
+          effect: NoSchedule
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: "3"
+              memory: "4Gi"

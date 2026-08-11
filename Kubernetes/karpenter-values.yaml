@@ -1,0 +1,5 @@
+settings:
+  clusterCompartmentId: "ocid1.compartment.oc1..aaaaaaaahalatvd7ffsoopo4rp5iqcefaqz7whc5umn5wrrnxe24rlbfm55a"
+  vcnCompartmentId: "ocid1.compartment.oc1..aaaaaaaahalatvd7ffsoopo4rp5iqcefaqz7whc5umn5wrrnxe24rlbfm55a"
+  ociVcnIpNative: true
+  apiserverEndpoint: "10.0.1.11"

@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vllm-gpu
+  namespace: inference
+  labels:
+    tier: gpu
+spec:
+  serviceName: vllm-gpu-headless
+  replicas: 1
+  podManagementPolicy: Parallel
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vllm-gpu
+  template:
+    metadata:
+      labels:
+        app: vllm-gpu
+        app.kubernetes.io/name: vllm-gpu
+        tier: gpu
+      annotations:
+        karpenter.sh/do-not-disrupt: "true"
+    spec:
+      priorityClassName: inference-serving
+      nodeSelector:
+        inference-tier: gpu
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        - key: inference-tier
+          value: gpu
+          effect: NoSchedule
+      containers:
+        - name: vllm
+          image: docker.io/vllm/vllm-openai:v0.26.0
+          args:
+            - --model=openai/gpt-oss-20b
+            - --served-model-name=gpt-oss-20b
+            - --max-model-len=8192
+            - --gpu-memory-utilization=0.90
+            - --port=8000
+          env:
+            - name: HF_HOME
+              value: /cache
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef: {name: hf-token, key: token, optional: true}
+          ports:
+            - {containerPort: 8000, name: http}
+          resources:
+            requests: {cpu: "8", memory: "32Gi", nvidia.com/gpu: 1}
+            limits:   {cpu: "14", memory: "64Gi", nvidia.com/gpu: 1}
+          volumeMounts:
+            - {name: hf-cache, mountPath: /cache}
+            - {name: shm, mountPath: /dev/shm}
+          startupProbe:
+            httpGet: {path: /health, port: 8000}
+            periodSeconds: 15
+            failureThreshold: 80
+          readinessProbe:
+            httpGet: {path: /health, port: 8000}
+            periodSeconds: 10
+      volumes:
+        - name: shm
+          emptyDir: {medium: Memory, sizeLimit: 8Gi}
+  volumeClaimTemplates:
+    - metadata:
+        name: hf-cache
+        labels:
+          app.kubernetes.io/name: vllm-gpu
+          tier: gpu
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: oci-bv
+        resources:
+          requests:
+            storage: 100Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-gpu-headless
+  namespace: inference
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: vllm-gpu
+  ports:
+    - {name: http, port: 8000, targetPort: 8000}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-gpu
+  namespace: inference
+  labels: {tier: gpu}
+spec:
+  selector: {app: vllm-gpu}
+  ports:
+    - {name: http, port: 8000, targetPort: 8000}
